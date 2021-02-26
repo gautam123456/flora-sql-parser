@@ -16,7 +16,6 @@
     'CURRENT_TIMESTAMP': true,
     'CURRENT_USER': true,
 
-    'DAY': true,
     'DELETE': true,
     'DESC': true,
     'DISTINCT': true,
@@ -34,14 +33,12 @@
     'GROUP': true,
 
     'HAVING': true,
-    'HOUR': true,
 
     'IN': true,
     'INDEX': true,
     'INNER': true,
     'INSERT': true,
     'INTO': true,
-    'INTERVAL': true,
     'IS': true,
 
     'JOIN': true,
@@ -51,10 +48,6 @@
     'LIKE': true,
     'LIMIT': true,
 
-    'MICROSECOND': true,
-    'MINUTE': true,
-    'MONTH': true,
-
     'NOT': true,
     'NULL': true,
 
@@ -63,13 +56,10 @@
     'ORDER': true,
     'OUTER': true,
 
-    'QUARTER': true,
-
     'RECURSIVE': true,
     'REPLACE': true,
     'RIGHT': true,
 
-    'SECOND': true,
     'SELECT': true,
     'SESSION_USER': true,
     'SET': true,
@@ -90,27 +80,41 @@
     'VALUES': true,
 
     'WITH': true,
-    'WEEK': true,
     'WHEN': true,
-    'WHERE': true,
-
-    'YEAR': true
+    'WHERE': true
   };
 
-  function createUnaryExpr(operator, expr) {
-    return { type: 'unary_expr', operator, expr };
+  function createUnaryExpr(op, e) {
+    return {
+      type: 'unary_expr',
+      operator: op,
+      expr: e
+    };
   }
 
-  function createBinaryExpr(operator, left, right) {
-    return { type: 'binary_expr', operator, left, right };
+  function createBinaryExpr(op, left, right) {
+    return {
+      type: 'binary_expr',
+      operator: op,
+      left: left,
+      right: right
+    };
   }
 
   function createList(head, tail) {
-    return [head, ...tail.map(item => item[3])];
+    var result = [head];
+    for (var i = 0; i < tail.length; i++) {
+      result.push(tail[i][3]);
+    }
+    return result;
   }
 
   function createBinaryExprChain(head, tail) {
-    return tail.reduce((result, item) => createBinaryExpr(item[1], result, item[3]), head);
+    var result = head;
+    for (var i = 0; i < tail.length; i++) {
+      result = createBinaryExpr(tail[i][1], result, tail[i][3]);
+    }
+    return result;
   }
 
   var cmpPrefixMap = {
@@ -163,27 +167,26 @@ select_stmt
       return s[2];
     }
 
-with_clause "WITH clause"
-  = KW_WITH __ recursive:KW_RECURSIVE? __ list:with_list {
-      return { type: 'with', recursive: recursive !== null, value: list };
-    }
-
-with_list
-  = head:with_list_element tail:(__ COMMA __ with_list_element)* {
+with_clause
+  = KW_WITH __ head:cte_definition tail:(__ COMMA __ cte_definition)* {
       return createList(head, tail);
     }
+  / __ KW_WITH __ KW_RECURSIVE __ cte:cte_definition {
+      cte.recursive = true;
+      return [cte]
+    }
 
-with_list_element
-  = name:ident_name __ columns:with_column_list? __ KW_AS __ LPAREN __ stmt:union_stmt __ RPAREN {
+cte_definition
+  = name:ident_name __ columns:cte_column_definition? __ KW_AS __ LPAREN __ stmt:union_stmt __ RPAREN {
       return { name, stmt, columns };
     }
 
-with_column_list
+cte_column_definition
   = LPAREN __ head:column tail:(__ COMMA __ column)* __ RPAREN {
       return createList(head, tail);
     }
 
-select_stmt_nake "SELECT statement"
+select_stmt_nake
   = cte:with_clause? __ KW_SELECT __
     opts:option_clause? __
     d:KW_DISTINCT?      __
@@ -212,7 +215,11 @@ select_stmt_nake "SELECT statement"
 // MySQL extensions to standard SQL
 option_clause
   = head:query_option tail:(__ query_option)* {
-    return [head, ...tail.map(item => item[1])];
+    var opts = [head];
+    for (var i = 0, l = tail.length; i < l; ++i) {
+      opts.push(tail[i][1]);
+    }
+    return opts;
   }
 
 query_option
@@ -224,18 +231,18 @@ query_option
         / OPT_SQL_BUFFER_RESULT
     ) { return option; }
 
-column_clause "columns"
+column_clause
   = (KW_ALL / (STAR !ident_start)) { return '*'; }
   / head:column_list_item tail:(__ COMMA __ column_list_item)* {
       return createList(head, tail);
     }
 
 column_list_item
-  = table:ident __ DOT __ STAR {
+  = tbl:ident __ DOT __ STAR {
       return {
         expr: {
           type: 'column_ref',
-          table,
+          table: tbl,
           column: '*'
         },
         as: null
@@ -248,44 +255,67 @@ column_list_item
 alias_clause
   = KW_AS? __ i:ident { return i; }
 
-from_clause "FROM clause"
+from_clause
   = KW_FROM __ l:table_ref_list { return l; }
 
-table_ref_list "table reference list"
-  = head:table_ref tail:(__ COMMA? __ table_ref)* {
-      return createList(head, tail);
+table_ref_list
+  = head:table_base
+    tail:table_ref* {
+      tail.unshift(head);
+      return tail;
     }
 
-table_ref "table reference"
-  = t:table_primary { return t; }
-  / op:join_op __ t:table_ref __ spec:join_spec {
-      return { ...t, join: op, ...spec };
-    }
+table_ref
+  = __ COMMA __ t:table_base { return t; }
+  / __ t:table_join { return t; }
 
-table_primary
+
+table_join
+  = op:join_op __ t:table_base __ KW_USING __ LPAREN __ head:ident_name tail:(__ COMMA __ ident_name)* __ RPAREN {
+      t.join = op;
+      t.using = createList(head, tail);
+      return t;
+    }
+  / op:join_op __ t:table_base __ expr:on_clause? {
+      t.join = op;
+      t.on   = expr;
+      return t;
+    }
+  / op:join_op __ LPAREN __ stmt:union_stmt __ RPAREN __ KW_AS? __ alias:ident __ expr:on_clause? {
+    stmt.parentheses = true;
+    return {
+      expr: stmt,
+      as: alias,
+      join: op,
+      on: expr
+    };
+  }
+
+//NOTE that, the table assigned to `var` shouldn't write in `table_join`
+table_base
   = KW_DUAL {
-      return { type: 'dual' };
-    }
-  / LPAREN __ KW_VALUES __ l:table_row_value_expr_list __ RPAREN __ KW_AS? __ alias:ident __ cols:derived_col_list? {
       return {
-        expr: {
-            type: 'values',
-            value: l
-        },
-        as: alias,
-        columns: cols
+        type: 'dual'
       };
+  }
+  / t:table_name __ KW_AS? __ alias:ident? {
+      if (t.type === 'var') {
+        t.as = alias;
+        return t;
+      } else {
+        return {
+          db: t.db,
+          table: t.table,
+          as: alias
+        };
+      }
     }
-  / lateral:KW_LATERAL? __ sub:sub_query __ KW_AS? __ alias:ident __ cols:derived_col_list? {
+  / LPAREN __ stmt:union_stmt __ RPAREN __ KW_AS? __ alias:ident {
+      stmt.parentheses = true;
       return {
-        expr: { ...sub },
-        as: alias,
-        lateral: lateral !== null,
-        columns: cols
+        expr: stmt,
+        as: alias
       };
-    }
-  / t:table_name __ KW_AS? __ as:ident? {
-      return { ...t, as };
     }
 
 join_op
@@ -293,14 +323,6 @@ join_op
   / KW_RIGHT __ KW_OUTER? __ KW_JOIN { return 'RIGHT JOIN'; }
   / KW_FULL __ KW_OUTER? __ KW_JOIN { return 'FULL JOIN'; }
   / (KW_INNER __)? KW_JOIN { return 'INNER JOIN'; }
-
-join_spec "join specification"
-  = KW_ON __ e:expr {
-      return { on: e };
-    }
-  / KW_USING __ LPAREN __ head:ident_name tail:(__ COMMA __ ident_name)* __ RPAREN {
-      return { using: createList(head, tail) };
-    }
 
 table_name
   = dt:ident tail:(__ DOT __ ident)? {
@@ -317,37 +339,13 @@ table_name
       return v;
     }
 
-table_row_value_expr_list
-  = head:row_value_constructor tail:(__ COMMA __ row_value_constructor)* {
-      return createList(head, tail);
-    }
-
-row_value_constructor
-  = rowkw:KW_ROW? __ LPAREN __ head:literal __ tail:(__ COMMA __ literal)* __ RPAREN {
-      return {
-        type: 'row_value',
-        keyword: rowkw !== null,
-        value: createList(head, tail),
-      };
-    }
-
 on_clause
   = KW_ON __ e:expr { return e; }
 
-sub_query
-  = LPAREN __ stmt:union_stmt __ RPAREN {
-      return { ...stmt, parentheses: true };
-    }
-
-derived_col_list "derived column list"
-  = LPAREN __ head:ident __ tail:(__ COMMA __ ident)* __ RPAREN {
-      return createList(head, tail);
-    }
-
-where_clause "WHERE clause"
+where_clause
   = KW_WHERE __ e:expr { return e; }
 
-group_by_clause "GROUP BY clause"
+group_by_clause
   = KW_GROUP __ KW_BY __ l:column_ref_list { return l; }
 
 column_ref_list
@@ -355,10 +353,10 @@ column_ref_list
       return createList(head, tail);
     }
 
-having_clause "HAVING clause"
+having_clause
   = KW_HAVING __ e:expr { return e; }
 
-order_by_clause "ORDER BY clause"
+order_by_clause
   = KW_ORDER __ KW_BY __ l:order_by_list { return l; }
 
 order_by_list
@@ -368,14 +366,16 @@ order_by_list
 
 order_by_element
   = e:expr __ d:(KW_DESC / KW_ASC)? {
-    return { expr: e, type: d === 'DESC' ? 'DESC' : 'ASC' };
+    var obj = { expr: e, type: 'ASC' };
+    if (d === 'DESC') obj.type = 'DESC';
+    return obj;
   }
 
 number_or_param
   = literal_numeric
   / param
 
-limit_clause "LIMIT clause"
+limit_clause
   = KW_LIMIT __ i1:(number_or_param) __ tail:(COMMA __ number_or_param)? {
       var res = [i1];
       if (tail === null) res.unshift({ type: 'number', value: 0 });
@@ -447,10 +447,12 @@ value_item
 
 expr_list
   = head:expr tail:(__ COMMA __ expr)* {
-      return { type: 'expr_list', value: createList(head, tail) };
+      var el = { type: 'expr_list' };
+      el.value = createList(head, tail);
+      return el;
     }
 
-case_expr "CASE expression"
+case_expr
   = KW_CASE                         __
     expr:expr?                      __
     condition_list:case_when_then+  __
@@ -520,8 +522,9 @@ comparison_expr
     }
 
 exists_expr
-  = op:exists_op __ sub:sub_query {
-    return createUnaryExpr(op, { ...sub });
+  = op:exists_op __ LPAREN __ stmt:union_stmt __ RPAREN {
+    stmt.parentheses = true;
+    return createUnaryExpr(op, stmt);
   }
 
 exists_op
@@ -545,16 +548,16 @@ arithmetic_comparison_operator
 
 is_op_right
   = KW_IS __ right:additive_expr {
-      return { op: 'IS', right };
+      return { op: 'IS', right: right };
     }
   / (KW_IS __ KW_NOT) __ right:additive_expr {
-      return { op: 'IS NOT', right };
+      return { op: 'IS NOT', right: right };
   }
 
 between_op_right
   = op:between_or_not_between_op __  begin:additive_expr __ KW_AND __ end:additive_expr {
       return {
-        op,
+        op: op,
         right: {
           type: 'expr_list',
           value: [begin, end]
@@ -576,15 +579,15 @@ in_op
 
 like_op_right
   = op:like_op __ right:comparison_expr {
-      return { op, right: right };
+      return { op: op, right: right };
     }
 
 in_op_right
   = op:in_op __ LPAREN  __ l:expr_list __ RPAREN {
-      return { op, right: l };
+      return { op: op, right: l };
     }
   / op:in_op __ e:var_decl {
-      return { op, right: e };
+      return { op: op, right: e };
     }
 
 additive_expr
@@ -599,7 +602,7 @@ additive_operator
 multiplicative_expr
   = head:primary
     tail:(__ multiplicative_operator  __ primary)* {
-      return createBinaryExprChain(head, tail);
+      return createBinaryExprChain(head, tail)
     }
 
 multiplicative_operator
@@ -614,13 +617,14 @@ primary
   / column_ref
   / param
   / LPAREN __ e:expr __ RPAREN {
-      return { ...e, parentheses: true };
+      e.parentheses = true;
+      return e;
     }
   / LPAREN __ list:expr_list __ RPAREN {
-        return { ...list, parentheses: true };
+        list.parentheses = true;
+        return list;
     }
   / var_decl
-  / interval_expr
 
 column_ref
   = tbl:ident __ DOT __ col:column {
@@ -680,7 +684,7 @@ ident_start = [A-Za-z_]
 ident_part  = [A-Za-z0-9_]
 
 // to support column name like `cf1:name` in hbase
-column_part  = [A-Za-z0-9_:]
+column_part  = [A-Za-z0-9_:\-'.[\]]
 
 param
   = l:(':' ident_name) {
@@ -688,29 +692,53 @@ param
     }
 
 aggr_func
-  = name:KW_COUNT __ LPAREN __ expr:star_expr __ RPAREN {
-      return { type: 'aggr_func', name, args: { expr } };
-    }
-  / name:set_function_type  __ LPAREN __ quantifier:set_quantifier? __ expr:column_ref __ RPAREN {
-      return { type: 'aggr_func', name, quantifier, args: { expr } };
+  = aggr_fun_count
+  / aggr_fun_smma
+
+aggr_fun_smma
+  = name:KW_SUM_MAX_MIN_AVG  __ LPAREN __ e:additive_expr __ RPAREN {
+      return {
+        type: 'aggr_func',
+        name: name,
+        args: {
+          expr: e
+        }
+      };
     }
 
-set_function_type
-  = KW_AVG / KW_MAX / KW_MIN / KW_SUM
-  / KW_COUNT
-  / 'group_concat'i { return 'GROUP_CONCAT'; } /* MySQL doesn't support listagg */
+KW_SUM_MAX_MIN_AVG
+  = KW_SUM / KW_MAX / KW_MIN / KW_AVG
 
-set_quantifier = KW_DISTINCT / KW_ALL
+aggr_fun_count
+  = name:KW_COUNT __ LPAREN __ arg:count_arg __ RPAREN {
+      return {
+        type: 'aggr_func',
+        name: name,
+        args: arg
+      };
+    }
+
+count_arg
+  = e:star_expr { return { expr: e }; }
+  / d:KW_DISTINCT? __ c:column_ref { return { distinct: d, expr: c }; }
 
 star_expr
-  = STAR { return { type: 'star', value: '*' }; }
+  = "*" { return { type: 'star', value: '*' }; }
 
 func_call
   = name:ident __ LPAREN __ l:expr_list? __ RPAREN {
-      return { type: 'function', name, args: l ? l : { type: 'expr_list', value: [] } };
+      return {
+        type: 'function',
+        name: name,
+        args: l ? l: { type: 'expr_list', value: [] }
+      };
     }
   / name:scalar_func {
-      return { type: 'function', name, args: { type: 'expr_list', value: [] } };
+      return {
+        type: 'function',
+        name: name,
+        args: { type: 'expr_list', value: [] }
+      };
     }
 
 scalar_func
@@ -722,9 +750,13 @@ scalar_func
   / KW_SESSION_USER
   / KW_SYSTEM_USER
 
-cast_expr "CAST expression"
-  = KW_CAST __ LPAREN __ expr:expr __ KW_AS __ target:data_type __ RPAREN {
-    return { type: 'cast', expr, target };
+cast_expr
+  = KW_CAST __ LPAREN __ e:expr __ KW_AS __ t:data_type __ RPAREN {
+    return {
+      type: 'cast',
+      expr: e,
+      target: t
+    };
   }
   / KW_CAST __ LPAREN __ e:expr __ KW_AS __ KW_DECIMAL __ LPAREN __ precision:int __ RPAREN __ RPAREN {
     return {
@@ -753,18 +785,6 @@ cast_expr "CAST expression"
       }
     };
   }
-
-interval_expr "INTERVAL expression"
-  = KW_INTERVAL __  sign:("+" / "-")? __ "'"? __ value:int "'"? __ qualifier:interval_unit {
-    return { type: 'interval', sign, value, qualifier };
-  }
-
-interval_unit
-  = KW_MINUTE
-  / KW_HOUR
-  / KW_DAY
-  / KW_MONTH
-  / KW_YEAR
 
 signedness
   = KW_SIGNED
@@ -825,7 +845,6 @@ escape_char
   / "\\n"  { return "\n"; }
   / "\\r"  { return "\r"; }
   / "\\t"  { return "\t"; }
-  / "''"   { return "\'"; }
   / "\\u" h1:hexDigit h2:hexDigit h3:hexDigit h4:hexDigit {
       return String.fromCharCode(parseInt("0x" + h1 + h2 + h3 + h4));
     }
@@ -834,8 +853,8 @@ line_terminator
   = [\n\r]
 
 literal_numeric
-  = value:number {
-      return { type: 'number', value };
+  = n:number {
+      return { type: 'number', value: n };
     }
 
 number
@@ -847,8 +866,8 @@ number
 int
   = digits
   / digit:digit
-  / op:("-" / "+" ) digits:digits { return op + digits; }
-  / op:("-" / "+" ) digit:digit { return op + digit; }
+  / op:("-" / "+" ) digits:digits { return "-" + digits; }
+  / op:("-" / "+" ) digit:digit { return "-" + digit; }
 
 frac
   = "." digits:digits { return "." + digits; }
@@ -900,7 +919,6 @@ KW_OUTER    = "OUTER"i    !ident_start
 KW_UNION    = "UNION"i    !ident_start
 KW_VALUES   = "VALUES"i   !ident_start
 KW_USING    = "USING"i    !ident_start
-KW_LATERAL  = "LATERAL"i  !ident_start
 
 KW_WHERE    = "WHERE"i      !ident_start
 KW_WITH     = "WITH"i       !ident_start
@@ -957,13 +975,6 @@ KW_TIME     = "TIME"i     !ident_start { return 'TIME'; }
 KW_TIMESTAMP= "TIMESTAMP"i!ident_start { return 'TIMESTAMP'; }
 KW_USER     = "USER"i     !ident_start { return 'USER'; }
 
-KW_INTERVAL     = "INTERVAL"i !ident_start { return 'INTERVAL'; }
-KW_MINUTE       = "MINUTE"i !ident_start { return 'MINUTE'; }
-KW_HOUR         = "HOUR"i !ident_start { return 'HOUR'; }
-KW_DAY          = "DAY"i !ident_start { return 'DAY'; }
-KW_MONTH        = "MONTH"i !ident_start { return 'MONTH'; }
-KW_YEAR         = "YEAR"i !ident_start { return 'YEAR'; }
-
 KW_CURRENT_DATE     = "CURRENT_DATE"i !ident_start { return 'CURRENT_DATE'; }
 KW_CURRENT_TIME     = "CURRENT_TIME"i !ident_start { return 'CURRENT_TIME'; }
 KW_CURRENT_TIMESTAMP= "CURRENT_TIMESTAMP"i !ident_start { return 'CURRENT_TIMESTAMP'; }
@@ -976,7 +987,6 @@ KW_RETURN = 'return'i
 KW_ASSIGN = ':='
 
 KW_DUAL = "DUAL"
-KW_ROW  = "ROW"i !ident_start { return 'ROW'; }
 
 // MySQL extensions to SQL
 OPT_SQL_CALC_FOUND_ROWS = "SQL_CALC_FOUND_ROWS"i
@@ -1107,15 +1117,23 @@ proc_array =
   }
 
 var_decl
-  = KW_VAR_PRE name:ident_name members:mem_chain {
+  = KW_VAR_PRE name:ident_name m:mem_chain {
     //push for analysis
     varList.push(name);
-    return { type: 'var', name,  members };
+    return {
+      type: 'var',
+      name: name,
+      members: m
+    };
   }
 
 mem_chain
   = l:('.' ident_name)* {
-    return l.map(item => item[1]);
+    var s = [];
+    for (var i = 0; i < l.length; i++) {
+      s.push(l[i][1]);
+    }
+    return s;
   }
 
 data_type

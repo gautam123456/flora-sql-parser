@@ -1,67 +1,60 @@
 {
-  "name": "flora-sql-parser",
-  "version": "0.9.4",
-  "description": "Parse SQL (select) statements into abstract syntax tree (AST) and convert ASTs back to SQL.",
-  "main": "index.js",
-  "scripts": {
-    "build": "node -e \"parseInt(process.versions.node, 10) >= 10 ? require('fs').mkdirSync('build', { recursive: true }) : process.exit(1);\" && pegjs -o build/pegjs-parser.js sql.pegjs",
-    "pretest": "npm run build",
-    "test": "mocha --recursive",
-    "lint": "eslint .",
-    "lint-fix": "eslint --fix .",
-    "prepack": "npm run build"
-  },
-  "pre-commit": "test",
-  "keywords": [
-    "sql",
-    "parser",
-    "ast"
-  ],
-  "author": {
-    "name": "BörseGo AG",
-    "email": "it@boerse-go.de"
-  },
-  "contributors": [
-    {
-      "name": "Marco Baumgartl",
-      "email": "marco.baumgartl@boerse-go.de"
+    "name": "floral-sql-parser",
+    "version": "0.9.8",
+    "description": "Parse SQL (select) statements into abstract syntax tree (AST) and convert ASTs back to SQL.",
+    "main": "index.js",
+    "scripts": {
+        "build": "node -e \"parseInt(process.versions.node, 10) >= 10 ? require('fs').mkdirSync('build', { recursive: true }) : process.exit(1);\" && pegjs -o build/pegjs-parser.js sql.pegjs",
+        "pretest": "npm run build",
+        "test": "mocha --recursive",
+        "lint": "eslint .",
+        "lint-fix": "eslint --fix .",
+        "prepack": "npm run build"
     },
-    {
-      "name": "Nico Kaiser",
-      "email": "nico.kaiser@boerse-go.de"
+    "author": {
+        "name": "BörseGo AG",
+        "email": "it@boerse-go.de"
     },
-    {
-      "name": "Mark Plomer",
-      "email": "mark.plomer@boerse-go.de"
+    "contributors": [
+        {
+            "name": "Marco Baumgartl",
+            "email": "marco.baumgartl@boerse-go.de"
+        },
+        {
+            "name": "Nico Kaiser",
+            "email": "nico.kaiser@boerse-go.de"
+        },
+        {
+            "name": "Mark Plomer",
+            "email": "mark.plomer@boerse-go.de"
+        }
+    ],
+    "files": [
+        "index.js",
+        "lib/",
+        "build/pegjs-parser.js",
+        "README.md",
+        "LICENSE"
+    ],
+    "license": "GPL-2.0",
+    "repository": "godmodelabs/flora-sql-parser",
+    "homepage": "https://github.com/godmodelabs/flora-sql-parser",
+    "engines": {
+        "node": ">=10"
+    },
+    "dependencies": {
+        "flora-errors": "^2.0.0",
+        "has": "^1.0.3"
+    },
+    "devDependencies": {
+        "@types/chai": "^4.2.14",
+        "@types/mocha": "^8.2.0",
+        "chai": "^4.2.0",
+        "eslint": "^7.18.0",
+        "eslint-config-prettier": "^7.1.0",
+        "eslint-plugin-prettier": "^3.3.1",
+        "mocha": "^8.2.1",
+        "pegjs": "^0.10.0",
+        "prettier": "^2.2.1"
     }
-  ],
-  "files": [
-    "index.js",
-    "lib/",
-    "build/pegjs-parser.js",
-    "README.md",
-    "LICENSE"
-  ],
-  "license": "GPL-2.0",
-  "repository": "godmodelabs/flora-sql-parser",
-  "homepage": "https://github.com/godmodelabs/flora-sql-parser",
-  "engines": {
-    "node": ">=10"
-  },
-  "dependencies": {
-    "flora-errors": "^2.0.0",
-    "has": "^1.0.3"
-  },
-  "devDependencies": {
-    "@types/chai": "^4.2.14",
-    "@types/mocha": "^8.2.0",
-    "chai": "^4.2.0",
-    "eslint": "^7.18.0",
-    "eslint-config-prettier": "^7.1.0",
-    "eslint-plugin-prettier": "^3.3.1",
-    "mocha": "^8.2.1",
-    "pegjs": "^0.10.0",
-    "pre-commit": "^1.2.2",
-    "prettier": "^2.2.1"
-  }
 }
